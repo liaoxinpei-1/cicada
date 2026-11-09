@@ -325,8 +325,7 @@ final class RoomMic: AudioSource {
 
     func start() throws {
         startedAt = Date()
-        silentSince = nil
-        silenceChecked = false
+        silence = .waiting
         AudioDevices.pinInput(engine, to: device)
         let input = engine.inputNode
         // The hardware format: after pinning, the client format can still be the system mic's,
@@ -394,23 +393,29 @@ final class RoomMic: AudioSource {
     nonisolated(unsafe) static var simulateSilence = false
     /// Called on the main queue when the mic stayed silent after being opened again.
     var onSilent: (() -> Void)?
-    private var silentSince: Date?
-    private var silentRestarts = 0
-    private var silenceChecked = false
+    /// Per opening of the mic, on the audio thread: whether it has been silent since it started.
+    private enum SilenceWatch { case waiting, silentSince(Date), settled }
+    private var silence = SilenceWatch.waiting
+    /// Opened again once already for silence (main queue): the next time it is reported instead.
+    private var reopenedForSilence = false
 
     /// On the audio thread, per block: a mic silent since it started is opened again once, and
     /// reported (`onSilent`) when it is still silent after that.
     private func watchSilence(sound: Bool) {
-        guard !silenceChecked else { return }
-        if sound { silenceChecked = true; return }
-        let since = silentSince ?? Date()
-        silentSince = since
+        let since: Date
+        switch silence {
+        case .settled: return
+        case .waiting: since = Date()
+        case .silentSince(let d): since = d
+        }
+        if sound { silence = .settled; return }
+        silence = .silentSince(since)
         guard Date().timeIntervalSince(since) >= Self.silentAfter else { return }
-        silenceChecked = true
+        silence = .settled
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.stopped else { return }
-            if self.silentRestarts == 0 {
-                self.silentRestarts += 1
+            if !self.reopenedForSilence {
+                self.reopenedForSilence = true
                 self.startedAt = .distantPast
                 self.restart("silent since it started")
             } else {

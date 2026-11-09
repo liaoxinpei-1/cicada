@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
     /// Settings › AI 服务's 自己选模型 is unfolded.
     @Published var aiModelsOpen = false
 
-    @Published var running = false
+    @Published private(set) var running = false
     /// The meeting is about to end by itself (a hang-up or a long silence) unless someone keeps it going.
     @Published private(set) var ending: MeetingEndWatch.Pending?
     /// The last meeting ended by itself: the menu says so, and the next call in a meeting app starts a new one.
@@ -68,40 +68,41 @@ final class AppModel: ObservableObject {
     private var fakeCalls: [String: String]?
     private var endTimesOverride: (silence: Double, countdown: Double, grace: Double)?
     @Published var status = L("准备就绪")
-    @Published var summary = ""
-    @Published var installed: Set<String> = []
-    @Published var candidates: [Lang] = []
+    @Published private(set) var summary = ""
+    @Published private(set) var installed: Set<String> = []
+    @Published private(set) var candidates: [Lang] = []
     /// 听不出: the languages offered while "auto" can't tell (empty when it can).
-    @Published var languageAsk: [Lang] = []
+    @Published private(set) var languageAsk: [Lang] = []
     /// The second speech model coming in the background: its name and how far along.
-    @Published var modelFetch: ModelFetch?
+    @Published private(set) var modelFetch: ModelFetch?
     /// 先用○○听: offered, listening, or just handed back to this Mac.
-    @Published var cloud = CloudState()
+    @Published private(set) var cloud = CloudState()
     /// 继续等 was chosen: the offer stays away until the next meeting.
     private var cloudDeclined = false
-    @Published var identifyingLanguage = false
-    /// 电脑和会议室 with the microphone not allowed: the Mac's side goes on, the room's can't start.
-    @Published var hybridMicDenied = false
+    @Published private(set) var identifyingLanguage = false
+    /// 电脑和会议室 with the microphone not allowed (since when): the Mac's side goes on, the room's can't start.
+    @Published private(set) var micDeniedSince: Date?
+    var hybridMicDenied: Bool { micDeniedSince != nil }
     /// Debug (`micDeniedSim`): 电脑和会议室 acts as if the microphone were refused.
     private var fakeMicDenied = false
     /// Something only you can fix, said beyond the panel (shut while you meet): the menu bar's dot
     /// and its tooltip. The microphone also goes to the notes window, the subtitle bar and, once a
     /// meeting, a notification.
     @Published private(set) var problem: String?
-    private var micDeniedSince: Date?
+    /// The notification went out: once a meeting, however often the microphone is refused again.
     private var micDeniedNotified = false
     /// 麦克风没声音: the room mic stayed digital silence after being opened again.
-    @Published var roomMicSilent = false
+    @Published private(set) var roomMicSilent = false
     /// 外接麦克风断开了: what happened instead (RoomMicLoss), for a few seconds.
     @Published var roomMicLost: String?
     /// The debug command's pretend unplug: these inputs count as gone.
     private var fakeGoneMics: Set<String> = []
     /// Why the model 听不出 needed couldn't be had, when that is so.
-    @Published var modelProblem: ModelProblem?
+    @Published private(set) var modelProblem: ModelProblem?
     /// That model was the one to start with and there is none to fall back on: nothing is listening.
-    @Published var modelBlocked = false
+    @Published private(set) var modelBlocked = false
     /// 听不出 because none of the installed models hear their language: it offers ones not installed.
-    @Published var languageNotInstalled = false
+    @Published private(set) var languageNotInstalled = false
     @Published var outputs: [OutputDevice] = []
     @Published var speakPhase: SpeakEngine.Phase = .idle
     @Published var settingsSection: SettingsSection =
@@ -112,10 +113,9 @@ final class AppModel: ObservableObject {
             if settingsSection != oldValue { voicePickerOpen = false }
         }
     }
-    @Published var systemAudioOK = false
-    /// 系统音频录制 was refused. Turned on later in System Settings, it only takes once Cicada is
-    /// reopened (macOS says so too), so the guide offers that.
-    @Published var systemAudioRefused = false
+    @Published private(set) var systemAudio = SystemAudioAccess.unknown
+    var systemAudioOK: Bool { systemAudio == .granted }
+    var systemAudioRefused: Bool { systemAudio == .refused }
     /// Quitting to reopen (`relaunch`): closing the guide now isn't finishing it.
     var relaunching = false
     /// Speech recognition can run: always on macOS 26; below it, Dictation on and 语音识别 allowed.
@@ -130,9 +130,10 @@ final class AppModel: ObservableObject {
     @Published var onboardingStep = 1
     /// Step 3 is showing what skipping the key leaves out (debug: `onboarding:3,skip`).
     @Published var onboardingKeySkip = false
-    /// Step 4's yes/no (false) or checklist (true); nil follows whether speaking is on
-    /// (debug: `onboarding:4,ask` / `onboarding:4,setup`).
-    @Published var onboardingSpeakSetup: Bool?
+    /// What step 4 shows (debug: `onboarding:4,ask` / `onboarding:4,setup`).
+    enum SpeakStep { case followSetting, ask, checklist }
+    /// Step 4's yes/no or checklist; until one is chosen, the checklist if speaking is already on.
+    @Published var onboardingSpeakSetup = SpeakStep.followSetting
     /// Debug: which meeting and tab the main window shows ("<id>" or "<id>,transcript").
     @Published var mainShow: String?
     /// Hold right ⌥ is chosen but "输入监控" isn't allowed yet.
@@ -436,7 +437,7 @@ final class AppModel: ObservableObject {
     func refresh() {
         running = listen.isRunning
         // Once the tap has run, the permission is there: pausing doesn't take it away.
-        systemAudioOK = systemAudioOK || (listen.isRunning && !settings.listensToRoom)
+        if listen.isRunning && !settings.listensToRoom && systemAudio != .granted { systemAudio = .granted }
         summary = settings.listensToRoom ? L("麦克风 · \(listen.languageSummary())")
             : settings.hearsBoth ? L("电脑和麦克风 · \(listen.languageSummary())") : listen.languageSummary()
         candidates = listen.candidates
@@ -475,13 +476,10 @@ final class AppModel: ObservableObject {
         checkProblem()
         let devices = AudioDevices.outputs()
         if devices.map(\.uid) != outputs.map(\.uid) { outputs = devices }
-        if listen.isRunning && !settings.listensToRoom && !systemAudioOK { systemAudioOK = true }
         // Refused (in the prompt, or turned off in System Settings later): the tap would only hear silence.
-        if let p = SystemAudioPermission.status() {
-            let ok = p == .granted || (p == .unknown && systemAudioOK)
-            if ok != systemAudioOK { systemAudioOK = ok }
-            if (p == .denied) != systemAudioRefused { systemAudioRefused = p == .denied }
-        }
+        let access = systemAudio.next(status: SystemAudioPermission.status(),
+                                      tapRan: listen.isRunning && !settings.listensToRoom)
+        if access != systemAudio { systemAudio = access }
         let speech = Recognition.ready
         if speech != speechOK { speechOK = speech }
         refreshMicUsers()
@@ -574,7 +572,6 @@ final class AppModel: ObservableObject {
         let both = listen.isRunning && settings.hearsBoth && !Recognition.legacy
         let denied = both && (fakeMicDenied || [.denied, .restricted].contains(AVCaptureDevice.authorizationStatus(for: .audio)))
         if denied != hybridMicDenied {
-            hybridMicDenied = denied
             micDeniedSince = denied ? Date() : nil
             overlay.setAlert(denied ? L("听不到会议室 · 麦克风没允许") : nil)
         }
@@ -1828,7 +1825,7 @@ final class AppModel: ObservableObject {
             let p = arg.split(separator: ",").map(String.init)
             onboardingStep = min(max(Int(p.first ?? "") ?? 1, 1), OnboardingView.done)
             onboardingKeySkip = p.contains("skip")
-            onboardingSpeakSetup = p.contains("setup") ? true : p.contains("ask") ? false : nil
+            onboardingSpeakSetup = p.contains("setup") ? .checklist : p.contains("ask") ? .ask : .followSetting
             openOnboarding?()
         case "step": onboardingStep = Int(arg) ?? 1
         case "samplePlay": ensureListening(); sample.play()

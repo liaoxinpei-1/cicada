@@ -477,8 +477,20 @@ final class LegacyStream: RecognitionStream, @unchecked Sendable {
     private var recent: [AVAudioPCMBuffer] = []
     private var recentSeconds = 0.0
     /// Speech that came during a language check or the talk key, waiting in `recent`.
-    private var holding = false
-    private var heldVoice = false
+    private enum Held {
+        case nothing
+        /// Audio held with no speech in it yet: just the quiet before the next line, if it stays so.
+        case quiet
+        case speech
+    }
+    private var held = Held.nothing
+    /// Keeps `buffer` for later (in `recent`), noting whether it had speech in it. Lock held.
+    private func hold(_ buffer: AVAudioPCMBuffer, seconds: Double, voiced: Bool) {
+        recent.append(buffer)
+        recentSeconds += seconds
+        fed += seconds
+        if voiced || held == .speech { held = .speech } else { held = .quiet }
+    }
     private var finished = false
     private var finishWaiter: CheckedContinuation<Void, Never>?
     /// A draft of the next line held back until the line before it has come back finished, so
@@ -524,11 +536,7 @@ final class LegacyStream: RecognitionStream, @unchecked Sendable {
             // The user is speaking: the line in progress ends now, and the meeting's last few
             // seconds wait for the talk key to be let go (two tasks at once both come back empty).
             if current != nil { end() }
-            recent.append(buffer)
-            recentSeconds += seconds
-            fed += seconds
-            holding = true
-            if voiced { heldVoice = true }
+            hold(buffer, seconds: seconds, voiced: voiced)
             while recentSeconds > Self.holdLimit, recent.count > 1 {
                 recentSeconds -= Double(recent.removeFirst().frameLength) / buffer.format.sampleRate
             }
@@ -538,23 +546,18 @@ final class LegacyStream: RecognitionStream, @unchecked Sendable {
             // The line before is still being finished, or a language check is running: starting a
             // task now would make the other come back empty. Keep the words until then (a few seconds).
             let importing = role == .listen && Gate.backgroundBusy
-            if voiced || holding, (!lines.isEmpty || Gate.clipRunning || importing), recentSeconds < Self.holdLimit {
+            if voiced || held != .nothing, (!lines.isEmpty || Gate.clipRunning || importing), recentSeconds < Self.holdLimit {
                 // An import's line is in the recognizer: it ends its line and waits for this one.
                 if importing { Gate.meetingWaits(true) }
-                recent.append(buffer)
-                recentSeconds += seconds
-                fed += seconds
-                holding = true
-                if voiced { heldVoice = true }
+                hold(buffer, seconds: seconds, voiced: voiced)
                 return
             }
             // Held audio with no speech in it (the meeting was quiet while the user spoke) is just
             // the quiet before the next line, not the start of one.
-            if holding, !heldVoice, !voiced { holding = false }
-            if voiced || holding {
-                let spokenBefore = heldVoice
-                holding = false
-                heldVoice = false
+            if held == .quiet, !voiced { held = .nothing }
+            if voiced || held != .nothing {
+                let spokenBefore = held == .speech
+                held = .nothing
                 // The quiet just before the first word belongs to it: a soft onset is still heard.
                 begin(at: fed - recentSeconds)
                 for b in recent { lines[current!]?.request.append(b) }
@@ -565,7 +568,7 @@ final class LegacyStream: RecognitionStream, @unchecked Sendable {
             } else {
                 recent.append(buffer)
                 recentSeconds += seconds
-                while !holding, recentSeconds > Self.preroll, recent.count > 1 {
+                while held == .nothing, recentSeconds > Self.preroll, recent.count > 1 {
                     recentSeconds -= Double(recent.removeFirst().frameLength) / buffer.format.sampleRate
                 }
                 fed += seconds
@@ -701,9 +704,9 @@ final class LegacyStream: RecognitionStream, @unchecked Sendable {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             lock.lock()
             finished = true
-            if current == nil, holding {
+            if current == nil, held != .nothing {
                 // Words held back for the line before: they still need a line of their own.
-                holding = false
+                held = .nothing
                 begin(at: fed - recentSeconds)
                 for b in recent { lines[current!]?.request.append(b) }
                 recent = []

@@ -94,9 +94,8 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
     /// The onboarding window while it's open. The panel floats above it and can't be clicked
     /// through, so it must never sit on it: on a 1024×768 screen the sidebar covered 继续.
     private weak var avoiding: NSWindow?
-    /// The user's own frame, put back when the window closes, and where we put the panel instead.
-    private var ownFrame: NSRect?
-    private var placedFrame: NSRect?
+    /// Moved out of the way: the user's own frame, put back when the window closes, and where we put the panel instead.
+    private var moved: (own: NSRect, placed: NSRect)?
     /// Asked to show while there was no room beside the window: shown once it closes.
     private var waiting = false
 
@@ -110,13 +109,12 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             }
             return
         }
-        if let ownFrame, let p = panel {
+        if let moved, let p = panel {
             // Unless the user has moved it since; either way it's remembered again from here.
-            if p.frame == placedFrame { p.setFrame(ownFrame, display: true) }
+            if p.frame == moved.placed { p.setFrame(moved.own, display: true) }
             p.setFrameAutosaveName(Self.autosave)
         }
-        ownFrame = nil
-        placedFrame = nil
+        moved = nil
         if waiting {
             waiting = false
             show()
@@ -132,13 +130,11 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             debugLog("notes window waits: no room beside onboarding \(w.frame) in \(screen.visibleFrame)")
             return false
         }
-        if ownFrame == nil {
-            ownFrame = p.frame
-            // Not remembered: quit during onboarding and the next meeting still opens where the user left it.
-            p.setFrameAutosaveName("")
-        }
+        let own = moved?.own ?? p.frame
+        // Not remembered: quit during onboarding and the next meeting still opens where the user left it.
+        if moved == nil { p.setFrameAutosaveName("") }
         p.setFrame(r, display: true)
-        placedFrame = p.frame
+        moved = (own, p.frame)
         return true
     }
 

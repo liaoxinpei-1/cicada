@@ -22,11 +22,22 @@ final class VoiceMic: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.wquguru.cicada.voicemic")
     private let lock = NSLock()
-    private var unit: AudioUnit?
-    /// The devices the unit was made for: another mic or output means making it again.
-    private var builtFor: (input: AudioObjectID, output: AudioObjectID)?
+    private enum UnitState {
+        case none
+        /// Made for these devices: another mic or output means making it again.
+        case ready(AudioUnit, input: AudioObjectID, output: AudioObjectID)
+        /// Failed to start: given back once nobody uses it.
+        case stale(AudioUnit)
+    }
+    private var state = UnitState.none
+    private var unit: AudioUnit? {
+        switch state {
+        case .none: nil
+        case .ready(let u, _, _), .stale(let u): u
+        }
+    }
     private var building = false
-    private var running = false
+    /// Who hears the unit; it runs while there is anyone.
     private var consumers: [String: (AVAudioPCMBuffer) -> Void] = [:]
     private var waiting: [(Bool) -> Void] = []
     private var scratch = [Float](repeating: 0, count: 8192)
@@ -50,7 +61,8 @@ final class VoiceMic: @unchecked Sendable {
     func prepare(input: AudioObjectID, then: ((Bool) -> Void)? = nil) {
         guard let output = SystemAudioTap.defaultOutputDevice() else { then?(false); return }
         lock.lock()
-        let ready = builtFor.map { $0 == (input, output) } ?? false
+        var ready = false
+        if case .ready(_, let i, let o) = state { ready = (i, o) == (input, output) }
         if ready { lock.unlock(); then?(true); return }
         if let then { waiting.append(then) }
         if building { lock.unlock(); return }
@@ -60,9 +72,9 @@ final class VoiceMic: @unchecked Sendable {
             let t0 = Date()
             let made = make(input: input, output: output)
             let (ok, told) = lock.withLock { () -> (Bool, [(Bool) -> Void]) in
-                if let old = unit, !running { AudioComponentInstanceDispose(old); unit = nil; builtFor = nil }
+                if let old = unit, consumers.isEmpty { AudioComponentInstanceDispose(old); state = .none }
                 var ok = false
-                if let made, unit == nil { unit = made; builtFor = (input, output); ok = true } else if let made { AudioComponentInstanceDispose(made) }
+                if let made, unit == nil { state = .ready(made, input: input, output: output); ok = true } else if let made { AudioComponentInstanceDispose(made) }
                 building = false
                 defer { waiting = [] }
                 return (ok, waiting)
@@ -80,16 +92,15 @@ final class VoiceMic: @unchecked Sendable {
     func attach(_ key: String, input: AudioObjectID, onAudio: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
         guard let output = SystemAudioTap.defaultOutputDevice() else { return false }
         lock.lock()
-        guard let unit, let b = builtFor, b == (input, output) else { lock.unlock(); return false }
+        guard case .ready(let unit, let i, let o) = state, (i, o) == (input, output) else { lock.unlock(); return false }
+        let first = consumers.isEmpty
         consumers[key] = onAudio
-        let first = !running
-        running = true
         lock.unlock()
         guard first else { return true }
         let status = AudioOutputUnitStart(unit)
         if status != noErr {
             debugLog("voice mic: start failed \(status)")
-            lock.withLock { running = false; consumers = [:]; builtFor = nil }
+            lock.withLock { consumers = [:]; state = .stale(unit) }
             return false
         }
         debugLog("voice mic: started for \(key)")
@@ -100,8 +111,7 @@ final class VoiceMic: @unchecked Sendable {
     func detach(_ key: String) {
         lock.lock()
         guard consumers.removeValue(forKey: key) != nil else { lock.unlock(); return }
-        guard consumers.isEmpty, running, let unit else { lock.unlock(); return }
-        running = false
+        guard consumers.isEmpty, let unit else { lock.unlock(); return }
         lock.unlock()
         AudioOutputUnitStop(unit)
         debugLog("voice mic: stopped (\(key) was the last)")
@@ -110,9 +120,8 @@ final class VoiceMic: @unchecked Sendable {
     /// Lets go of the unit (not while anyone is attached), so the plain mic hears again.
     func release() {
         let old: AudioUnit? = lock.withLock {
-            guard !running, consumers.isEmpty, let u = unit else { return nil }
-            unit = nil
-            builtFor = nil
+            guard consumers.isEmpty, let u = unit else { return nil }
+            state = .none
             return u
         }
         if let old {
