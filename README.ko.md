@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4-Apache--2.0-blue" alt="Apache-2.0">
 </p>
 
-<p align="center"><a href="README.md">简体中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
+<p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
 
 Zoom, Teams, Feishu, Tencent Meeting 회의나 X Spaces, YouTube 라이브 방송을 들을 때 실시간 이중 언어 자막과 체계적인 회의록을 보여줍니다. 발언 차례가 되면 말하기 키(Mac은 오른쪽 `⌥`, Windows는 오른쪽 `Ctrl`)를 누른 채 말하면 상대방이 회의에서 바로 번역된 음성을 듣습니다. 시스템 소리를 직접 읽기 때문에 회의에 봇을 넣지 않아 상대방은 전혀 눈치채지 못합니다. Apple silicon Mac에서는 음성 인식이 모두 기기 안에서 이루어져 소리가 컴퓨터 밖으로 나가지 않습니다.
 

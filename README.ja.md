@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0">
 </p>
 
-<p align="center"><a href="README.md">简体中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
+<p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
 
 Zoom、Teams、Feishu、Tencent Meeting の会議でも、X スペースや YouTube のライブ配信でも、Cicada はリアルタイムの二か国語字幕を出しながら、構造化された議事メモを書き進めます。発言するときは、話すキー（Mac は右の `⌥`、Windows は右の `Ctrl`）を押したまま話せば、翻訳された音声がそのまま会議の相手に届きます。システムの音声を直接読み取るため、会議にボットを入れる必要はなく、相手には気づかれません。Apple シリコンの Mac ではすべて端末内で認識するため、音声が外に出ることはありません。
 
