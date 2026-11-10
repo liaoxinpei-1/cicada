@@ -5,6 +5,47 @@ writes it from the `feat:` and `fix:` commits since the last tag, grouped by pla
 scope), and the release workflow publishes it as the release notes. Since 1.1.2 every release ships
 every platform (one with nothing new says No changes); earlier ones shipped only those listed. Lines under `## Unreleased` become the release's summary. The Chinese changelog for users is `site/changelog.json`.
 
+## 1.8.0 — 2026-11-09
+
+### Mac
+
+#### New
+
+- Choose the microphone used for room meetings ([981f00a](https://github.com/wquguru/cicada/commit/981f00a70181918345aa8682d0d7ffb37abb5380))
+- Pick which microphone hears the room from the arrow beside Turn on mic ([1701241](https://github.com/wquguru/cicada/commit/170124157bb83f436ce28c5586ceda98862fe471))
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([2ef62fc](https://github.com/wquguru/cicada/commit/2ef62fc1ce4c9fd8f409d026aeea24a8a25f14d7))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([09b3b3d](https://github.com/wquguru/cicada/commit/09b3b3d9b9577ea0ee070f5e3a49e90f9a818acd))
+- The microphone menus no longer list the speakers or a VPAUAggregateAudioDevice while echo cancellation runs ([07ed4c0](https://github.com/wquguru/cicada/commit/07ed4c052ec26315dd69fea64385bb4ca1a5f42a))
+
+### Windows
+
+#### New
+
+- Keyboards without right Ctrl can pick another talk key in Settings › Interpreting ([994dd23](https://github.com/wquguru/cicada/commit/994dd23faf3a99e8909202939a79d2aa3efdae6a))
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([9ac1feb](https://github.com/wquguru/cicada/commit/9ac1feb789feb297ec41c354ff9cab35d029f662))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([dace10e](https://github.com/wquguru/cicada/commit/dace10e3bc35bbb0a2504d0418d7f56d3b58fc78))
+- Preview says why no sound played, and a Windows voice the PC doesn't have is no longer picked ([3c8c9fd](https://github.com/wquguru/cicada/commit/3c8c9fd64ad1430b7e82d4e1bdc7e6a3562a646d))
+
+### Android
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([6d13b5c](https://github.com/wquguru/cicada/commit/6d13b5c75007fc4e1ddd8cb76a0d66cc180c48c7))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([64710de](https://github.com/wquguru/cicada/commit/64710de2f747a70560edd4e7a0fedb4ffb6e2be0))
+
+### Linux
+
+#### Fixed
+
+- Fixing misheard words no longer turns a Chinese word into its English translation, or changes letters inside an English word ([ee60b86](https://github.com/wquguru/cicada/commit/ee60b8663d4c8d9171e21b5d9297474b53511499))
+- A name the notes got wrong no longer spreads into translations and later fixes, and a name said again and again stays its own term ([3bd0057](https://github.com/wquguru/cicada/commit/3bd005738f7aafae305d77bea43cb8fad302103e))
+
 ## 1.7.0 — 2026-11-08
 
 ### Mac

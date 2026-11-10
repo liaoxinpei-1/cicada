@@ -25,9 +25,9 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
 
-Whether you're on Zoom, Teams, Feishu, or Tencent Meeting, or listening to X Spaces or a YouTube livestream, Cicada gives you live bilingual subtitles and writes structured meeting notes as it listens. When it's your turn to speak, hold the talk key (right `⌥` on Mac, right `Ctrl` on Windows) and the other side hears your translated voice right in the call. Cicada reads system audio directly without sending bots into the meeting, so no one else notices a thing. On Apple silicon Macs, all speech recognition runs on device, so audio never leaves your computer.
+In meetings or livestreams, Cicada gives you live bilingual subtitles and writes structured meeting notes as it listens. When it's your turn to speak, hold the talk key (right `⌥` on Mac, right `Ctrl` on Windows, customizable) and talk—the other side hears your translated voice right in the call. Cicada listens to system audio directly without sending bots into the meeting, so no one else notices a thing. On Apple silicon Macs, all speech recognition runs on device, so audio never leaves your computer.
 
-**Where it works**: Anything that plays sound on your computer. Tencent Meeting, Feishu, DingTalk, WeCom, Zoom, Teams, Google Meet, Webex, Discord, and Telegram voice chats, plus X Spaces, YouTube, Twitch, Bilibili Live, podcasts, and browser-based meetings. On Android, the system blocks recording audio from meeting and call apps—put the call on speaker and use In person instead.
+**Where it works**: Anything that plays sound on your computer—Tencent Meeting, Feishu, DingTalk, WeCom, Zoom, Teams, Google Meet, Webex, Discord, and Telegram voice chats, plus X Spaces, YouTube, Twitch, Bilibili Live, podcasts, and web pages. On phones, the system blocks recording audio from call and meeting apps—put it on speaker and use In person instead.
 
 <p align="center">
   <img src="docs/demo.gif" width="800" alt="A Bloomberg English livestream on YouTube with Cicada's live Chinese notes, topics, and fishbone diagram on the right and bilingual subtitles at the bottom">
@@ -54,11 +54,11 @@ With an AI service connected, misheard names and terms are fixed on the spot: so
 
 ### Live subtitles and language detection
 
-Cicada detects the spoken language within seconds and translates it into your system language; press `⌃⌥S` to switch display modes. The subtitle bar only appears when someone speaks and turns see-through under your pointer so it never blocks buttons. On macOS 26 with Apple silicon, Cicada also re-listens on device to refine each line 15 to 30 seconds later, fixing typos and words lost at line breaks.
+Cicada detects the spoken language within seconds and translates it into your system language; press `⌃⌥S` to switch display modes. The subtitle bar only appears when someone speaks and turns see-through under your pointer so it never blocks buttons. On macOS 26 with Apple silicon, Cicada also re-listens on device to refine each line 15 to 30 seconds later, fixing typos and missed words.
 
 ### In-person and hybrid meetings
 
-In a meeting room, click **Turn on mic** to listen to people around the table. Hybrid meetings use the exact same button: computer audio is marked **Online** and microphone audio is marked **In room**, combined in a single record (on macOS 14 and 15, turning on the mic listens only to the table). When speaker audio bleeds into the microphone, Cicada automatically ducks and deduplicates it so nothing is recorded twice; with headphones on, both sides can talk at once and both are kept. Windows and Linux follow the same rules. On the Mac, the small arrow beside the button picks which microphone hears the room (an iPhone or a conference mic, say) without changing the system default.
+Click **Turn on mic** to listen to people in the meeting room. Hybrid meetings use the exact same button: computer audio is marked **Online** and microphone audio is marked **In room**, combined in a single record (on macOS 14 and 15, turning on the mic listens only to the room). On speakers, Cicada automatically deduplicates audio so nothing is recorded twice; with headphones on, both sides can talk at once and both are kept. Windows and Linux follow the same rules. On the Mac, the small arrow beside the button picks which microphone to use (an iPhone or a conference mic, say) without changing the system default.
 
 ### Simultaneous interpreting
 
@@ -70,7 +70,9 @@ Hold the right `⌥` key and speak so the other side hears your translated voice
 
 ### Meeting records
 
-Bilingual transcripts, notes, and raw audio recordings are saved on your computer. Click any line to play the recording from that point. The bundled on-device voiceprint model automatically separates different speakers (and fills in their names when a Ling key is set), and you can rename or merge them anytime if it gets someone wrong. After a meeting, you can generate notes retroactively or export to Markdown, Word, or SRT subtitles. **Share…** turns the notes (and, if you like, the bilingual transcript) into a link with an expiry and an optional password, copied together with one click; before anything is uploaded it is checked for keys, unpublished company information and other sensitive content, and held back if any is found. You can also turn local audio or video files into bilingual records via **File › Import Recording or Video…**. Right now "you" in the record only covers what you say while holding the talk key; capturing what you say directly in the meeting is on the [roadmap](#roadmap).
+Bilingual transcripts, notes, and raw audio recordings are saved on your computer. Click any line to play the recording from that point. The on-device voiceprint model automatically separates different speakers (and fills in their names when a Ling key is set), and you can rename or merge them anytime if it gets someone wrong.
+
+After a meeting, you can generate notes retroactively, export to Markdown, Word, or SRT subtitles, or turn local audio or video files into bilingual records via **File › Import Recording or Video…**. **Share…** turns the notes (and, if you like, the full bilingual transcript) into a link with an expiry and an optional password, copied with one click; before uploading, it automatically blocks keys, unpublished company information, and other sensitive content. Right now "you" in the record only covers what you say while holding the talk key; capturing what you say directly in the meeting is on the [roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/records.png" width="640" alt="Meeting records window showing identified speakers and a line-by-line English and Chinese transcript">
