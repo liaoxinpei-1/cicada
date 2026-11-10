@@ -11,10 +11,12 @@ import CoreAudio
 /// press) share it as consumers, and it runs while anyone is attached.
 ///
 /// The raw unit, because AVAudioEngine's voice processing fails ('bfmt') when the default input is
-/// the virtual mic, which 同声传译 makes it. Making the unit takes ~1.8 s, so it is made ahead and
-/// only started (~40 ms) and stopped per press; made but stopped, it doesn't hold the mic open, but
-/// it does starve AVAudioEngine's input on the same mic (−56 dB peaks): it is let go of before the
-/// plain mic is used.
+/// the virtual mic, which 同声传译 makes it. Not made ahead: while a unit exists in this process, even
+/// stopped, uninitialized or with no device set, every other app's input on the Mac hears almost
+/// nothing (measured from another process: −60 to −72 dB instead of −17 dB; Teams heard nobody,
+/// issue #24). So it is made when needed (1–1.7 s, nearly all of it in AudioComponentInstanceNew;
+/// the talk key's first words wait for it) and let go of as soon as nobody needs it; the plain mic
+/// in this process is starved by it the same way. The room holds it for the whole meeting.
 /// AGC is off (it lifts the room's noise with the voice, which recognition likes less), and other
 /// audio's ducking is set to its minimum: the meeting must stay audible while you talk.
 final class VoiceMic: @unchecked Sendable {
@@ -96,7 +98,7 @@ final class VoiceMic: @unchecked Sendable {
 
     /// `key` hears `input` from now on, if the unit is ready for it and the current output (it starts
     /// with the first consumer). Otherwise false: the caller uses the plain mic this time, after
-    /// `release` when nobody else is attached; a new unit is made later, not while the plain mic runs.
+    /// `release` when nobody else is attached.
     func attach(_ key: String, input: AudioObjectID, processing: Bool = true, onAudio: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
         guard let output = SystemAudioTap.defaultOutputDevice() else { return false }
         lock.lock()
@@ -117,7 +119,7 @@ final class VoiceMic: @unchecked Sendable {
         return true
     }
 
-    /// `key` stops hearing; the unit stops with the last consumer.
+    /// `key` stops hearing; the unit stops with the last consumer, and is kept until `release`.
     func detach(_ key: String) {
         lock.lock()
         guard consumers.removeValue(forKey: key) != nil else { lock.unlock(); return }
@@ -157,7 +159,8 @@ final class VoiceMic: @unchecked Sendable {
         debugLog("voice mic: processing \(bypass ? "off" : "on") (running \(running), stop \(stopped), set \(status), start \(started))")
     }
 
-    /// Lets go of the unit (not while anyone is attached), so the plain mic hears again.
+    /// Lets go of the unit (not while anyone is attached), so the mic hears again, here and in
+    /// every other app.
     func release() {
         let old: AudioUnit? = lock.withLock {
             guard consumers.isEmpty, let u = unit else { return nil }
@@ -257,7 +260,9 @@ final class EchoCancelledRoomMic: AudioSource, @unchecked Sendable {
 
     func start() throws {
         mic.prepare(input: device.id) { [weak self] ok in
-            guard let self, !self.lock.withLock({ self.stopped }) else { return }
+            guard let self else { return }
+            // Stopped while it was being made: nobody else may be left to give it back.
+            guard !self.lock.withLock({ self.stopped }) else { self.mic.release(); return }
             let attached = ok && self.mic.attach("room", input: self.device.id, processing: self.processing) { [weak self] buf in self?.deliver(buf) }
             if !attached {
                 debugLog("room mic: echo cancellation unavailable, plain mic instead")
@@ -271,6 +276,8 @@ final class EchoCancelledRoomMic: AudioSource, @unchecked Sendable {
     func stop() {
         lock.withLock { stopped = true }
         mic.detach("room")
+        // Kept, it would silence the mic for every other app (a press still using it keeps it).
+        mic.release()
     }
 
     private func deliver(_ buf: AVAudioPCMBuffer) {
