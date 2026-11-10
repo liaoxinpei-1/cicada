@@ -1587,6 +1587,22 @@ static class Tests
         Equal(64, VirtualCable.PackageSha256.Length, "a full SHA-256 is pinned");
     }
 
+    public static void GivesTheSpeakerBackAfterTheCableInstall()
+    {
+        static bool cable(string id) => id.StartsWith("cable");
+        var before = new Dictionary<string, string> { ["0/0"] = "realtek", ["0/1"] = "realtek", ["0/2"] = "headset", ["1/0"] = "mic", ["1/2"] = "cable-out" };
+        var after = new Dictionary<string, string> { ["0/0"] = "cable-in", ["0/1"] = "cable-in", ["0/2"] = "headset", ["1/0"] = "cable-out", ["1/1"] = "cable-out", ["1/2"] = "cable-out" };
+        var back = CableDefaults.Restore(before, after, cable);
+        Equal("0/0=realtek 0/1=realtek 1/0=mic", string.Join(" ", back.Select(r => $"{r.Key}={r.Id}")),
+            "only the defaults the cable took from a real device; one already on the cable, or unknown before, stays");
+        Equal(0, CableDefaults.Restore(before, before, cable).Count, "nothing changed, nothing to do");
+        Equal("realtek", CableDefaults.Speaker([("cable-in", true), ("realtek", false)]), "the first real speaker");
+        Equal(null, CableDefaults.Speaker([("cable-in", true)]), "no real speaker");
+        Check(CableDefaults.ShouldNotify(true, false), "told once");
+        Check(!CableDefaults.ShouldNotify(true, true), "not again while it stays on the cable");
+        Check(!CableDefaults.ShouldNotify(false, false), "a real speaker: nothing to say");
+    }
+
     static SpeakEngine Speaker(LingClient ling, NoVoice voice, AppSettings? settings = null) =>
         new(ling, new Translator(ling, new Fake(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))), new SessionStore(), settings ?? new AppSettings(), () => "en", () => null, voice);
 
@@ -1665,9 +1681,37 @@ static class Tests
             for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
             Check(await engine.Speak(Wav.Bytes(Tone(1)), new Sink()) is null && asked == 1, "pressed while the meeting played: not sent");
             Equal(Strings.L("对方在说话时说的，没有说出去"), engine.Problem, "and the bar says why");
+            // The same press through Windows' echo cancellation: the meeting is taken out, I am sent.
+            reply = "LANG: zh-CN\nORIGINAL: 我们周三能测完吗？\nTRANSLATION: Can we finish testing by Wednesday?";
+            engine.BeginRecording();
+            for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
+            Equal("Can we finish testing by Wednesday?", await engine.Speak(Wav.Bytes(Tone(1)), new Sink(), echoCancelled: true), "pressed while the meeting played, echo cancelled: sent");
+            Check(asked == 2 && engine.Problem is null, "and heard by the service");
+            // Echo cancellation doesn't let a silent press through.
+            engine.BeginRecording();
+            for (var i = 0; i < 30; i++) { log.Add(true); now += 0.1; }
+            Check(await engine.Speak(Wav.Bytes(new short[16000 * 3]), new Sink(), echoCancelled: true) is null && asked == 2, "a silent press still sends nothing");
         }
         finally { LingClient.Spacing = old; }
         Check(PressSpeech.Filler("嗯嗯。") && PressSpeech.Filler("Um, uh...") && !PressSpeech.Filler("嗯，好的。") && !PressSpeech.Filler("OK."), "fillers");
+    }
+
+    public static void EchoIsDroppedOnlyFromThePlainMic()
+    {
+        Check(SpeakEngine.EchoDrop(false, 0.51), "plain mic, meeting over half the press: dropped");
+        Check(!SpeakEngine.EchoDrop(false, 0.5), "half exactly: kept, as before");
+        Check(!SpeakEngine.EchoDrop(true, 1.0), "echo cancelled: never dropped as echo");
+        var aec = EchoCancel.Effect;
+        var ns = new Guid("6f64adbf-8211-11e2-8c70-2c27d7f001fa");
+        Check(!EchoCancel.InEffect(null), "no effects list (Windows 10): plain");
+        Check(!EchoCancel.InEffect([]), "nothing listed: plain");
+        Check(!EchoCancel.InEffect([new(ns, false, true)]), "noise suppression alone isn't echo cancellation");
+        Check(!EchoCancel.InEffect([new(aec, false, false)]), "AEC listed but off: plain");
+        Check(EchoCancel.InEffect([new(ns, false, true), new(aec, false, true)]), "AEC on: cancelled");
+        Check(EchoCancel.CanTurnOn([new(aec, true, false)]) && !EchoCancel.CanTurnOn([new(aec, false, false)]) && !EchoCancel.CanTurnOn([new(aec, true, true)]), "only an AEC that is off and may be set is turned on");
+        var m = PressSpeech.Measure(Wav.Bytes(Tone(1)));
+        Check(m.Spoken && m.Summary.StartsWith("voiced ") && m.Summary.Contains("dBFS"), $"the press measure is logged: {m.Summary}");
+        Check(!PressSpeech.Measure(Wav.Bytes(new short[100])).Spoken, "too short to measure");
     }
 
     public static async Task WhatISayGoesAheadOfTheMeeting()

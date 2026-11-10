@@ -286,8 +286,14 @@ sealed partial class SettingsWindow : Window
             note is null ? Card(null, LF("线上的人听到的声音（%@）", Ui.TargetName(target)), null, voice)
                 : Ui.Stack(0, Card(null, LF("线上的人听到的声音（%@）", Ui.TargetName(target)), null, voice), PreviewNoteBox(note.Value)));
         yield return Label(L("麦克风"));
-        yield return Group(
-            Card(null, L("译文送进会议"), cable ? L("在会议软件里把麦克风选成 CABLE Output") : L("需要装免费的 VB-Cable；装的时候 Windows 会请你确认"), cableControl));
+        var mic = Card(null, L("译文送进会议"), cable ? L("在会议软件里把麦克风选成 CABLE Output") : L("需要装免费的 VB-Cable；装的时候 Windows 会请你确认"), cableControl);
+        if (cable && Endpoints.SpeakerIsCable())
+        {
+            var strip = CableInstaller.SpeakerStrip(this, Render);
+            strip.Margin = new Thickness(0, 4, 0, 12);
+            yield return Group(mic, strip);
+        }
+        else yield return Group(mic);
     }
 
     // 按住说话's 更改: waiting for a key, and why the last one pressed can't be it.

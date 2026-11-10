@@ -75,3 +75,5 @@ vm/vmctl.sh g shot C:\x.png    # Windows 里截图（屏幕共享看到的，不
 ## 同声传译怎么测
 
 VM 里没有麦克风：`cicadactl fakemic <wav>` 让按住说话键时用这个文件代替麦克风（`talkkey <名字>` 换键，`talkkey choose` 等同点“更改”），`speak <wav>` 直接说一句。`record <秒> <wav>` 录下 CABLE Output（会议软件会听到的声音），拷回 Mac 用 `cicada-cli hear` 核对语言和内容。`spike/clips/me-zh.wav`、`me-en.wav` 是“我说的话”，`silence.wav` 用来测什么都不发。
+
+按住说话键时麦克风用通话类别打开（`EchoMic`），走这台电脑的回声消除：日志 `speak: mic with echo cancellation` 时电脑放着会议声音也照发，`speak: mic plain` 时（Windows 10、驱动没有回声消除）对方说话期间按的照旧不发。`talkmic CABLE Output` 让按住说话键读这个输入（VM 只有它），和 `fakemic` 一起用时仍发文件里的话，但真的走一遍这条采集；虚拟线没有回声消除，所以 VM 里只能看到 plain 这条路。真正的回声消除要真机加扬声器测。

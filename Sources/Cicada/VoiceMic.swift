@@ -39,8 +39,16 @@ final class VoiceMic: @unchecked Sendable {
     private var building = false
     /// Who hears the unit; it runs while there is anyone.
     private var consumers: [String: (AVAudioPCMBuffer) -> Void] = [:]
+    /// The consumers that want the echo taken out. With none of them attached the unit runs bypassed:
+    /// the plain mic's sound, from the same unit, so the talk key can turn processing on mid-meeting
+    /// without making or letting go of a unit (each of which silences the rest of the audio).
+    private var processed: Set<String> = []
+    private var bypassed: Bool?
     private var waiting: [(Bool) -> Void] = []
     private var scratch = [Float](repeating: 0, count: 8192)
+    /// Render calls since the last processing change, and the last error (debug, real-time thread).
+    private nonisolated(unsafe) var renders = 0
+    private nonisolated(unsafe) var renderError: OSStatus = noErr
     /// After a unit is made or let go of: audio already flowing in this process goes silent for good
     /// (measured: an output engine playing into BlackHole, and the system audio tap), and must be
     /// started anew.
@@ -74,7 +82,7 @@ final class VoiceMic: @unchecked Sendable {
             let (ok, told) = lock.withLock { () -> (Bool, [(Bool) -> Void]) in
                 if let old = unit, consumers.isEmpty { AudioComponentInstanceDispose(old); state = .none }
                 var ok = false
-                if let made, unit == nil { state = .ready(made, input: input, output: output); ok = true } else if let made { AudioComponentInstanceDispose(made) }
+                if let made, unit == nil { state = .ready(made, input: input, output: output); bypassed = nil; ok = true } else if let made { AudioComponentInstanceDispose(made) }
                 building = false
                 defer { waiting = [] }
                 return (ok, waiting)
@@ -89,13 +97,15 @@ final class VoiceMic: @unchecked Sendable {
     /// `key` hears `input` from now on, if the unit is ready for it and the current output (it starts
     /// with the first consumer). Otherwise false: the caller uses the plain mic this time, after
     /// `release` when nobody else is attached; a new unit is made later, not while the plain mic runs.
-    func attach(_ key: String, input: AudioObjectID, onAudio: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
+    func attach(_ key: String, input: AudioObjectID, processing: Bool = true, onAudio: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
         guard let output = SystemAudioTap.defaultOutputDevice() else { return false }
         lock.lock()
         guard case .ready(let unit, let i, let o) = state, (i, o) == (input, output) else { lock.unlock(); return false }
         let first = consumers.isEmpty
         consumers[key] = onAudio
+        if processing { processed.insert(key) } else { processed.remove(key) }
         lock.unlock()
+        applyBypass(unit)
         guard first else { return true }
         let status = AudioOutputUnitStart(unit)
         if status != noErr {
@@ -111,10 +121,40 @@ final class VoiceMic: @unchecked Sendable {
     func detach(_ key: String) {
         lock.lock()
         guard consumers.removeValue(forKey: key) != nil else { lock.unlock(); return }
-        guard consumers.isEmpty, let unit else { lock.unlock(); return }
+        processed.remove(key)
+        guard consumers.isEmpty, let unit else {
+            let u = unit
+            lock.unlock()
+            if let u { applyBypass(u) }
+            return
+        }
         lock.unlock()
         AudioOutputUnitStop(unit)
         debugLog("voice mic: stopped (\(key) was the last)")
+    }
+
+    /// Processing on while a consumer wants it, else bypassed (only the room is attached, unprocessed).
+    private func applyBypass(_ unit: AudioUnit) {
+        let change: Bool? = lock.withLock {
+            let b = processed.isEmpty
+            if bypassed == b { return nil }
+            bypassed = b
+            return b
+        }
+        guard let bypass = change else { return }
+        debugLog("voice mic: \(renders) renders since the last change, last error \(renderError)")
+        renders = 0
+        renderError = noErr
+        var value: UInt32 = bypass ? 1 : 0
+        // Set on a running unit, it stopped delivering any audio: stop, set, start (~40 ms).
+        var running: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0, &running, &size)
+        let stopped = running != 0 ? AudioOutputUnitStop(unit) : noErr
+        let status = AudioUnitSetProperty(unit, kAUVoiceIOProperty_BypassVoiceProcessing, kAudioUnitScope_Global, 0,
+                                          &value, UInt32(MemoryLayout<UInt32>.size))
+        let started = running != 0 ? AudioOutputUnitStart(unit) : noErr
+        debugLog("voice mic: processing \(bypass ? "off" : "on") (running \(running), stop \(stopped), set \(status), start \(started))")
     }
 
     /// Lets go of the unit (not while anyone is attached), so the plain mic hears again.
@@ -122,6 +162,7 @@ final class VoiceMic: @unchecked Sendable {
         let old: AudioUnit? = lock.withLock {
             guard consumers.isEmpty, let u = unit else { return nil }
             state = .none
+            bypassed = nil
             return u
         }
         if let old {
@@ -171,6 +212,8 @@ final class VoiceMic: @unchecked Sendable {
             return AudioUnitRender(unit, flags, ts, 1, frames, &list)
         }
         let listeners = lock.withLock { Array(consumers.values) }
+        renders += 1
+        if status != noErr { renderError = status }
         guard status == noErr, !listeners.isEmpty, let out = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: frames),
               let dst = out.floatChannelData?[0] else { return status }
         out.frameLength = frames
@@ -199,20 +242,28 @@ final class EchoCancelledRoomMic: AudioSource, @unchecked Sendable {
     var deviceName: String { device.name }
     var deviceUID: String { device.uid }
 
-    init(mic: VoiceMic, device: OutputDevice) {
+    /// Off: the room hears the unit bypassed, the plain mic's sound and `echoGate` as with `RoomMic`
+    /// (echo cancellation lost most of what people at the table said); the unit is then running for
+    /// the talk key to turn processing on for a press.
+    private let processing: Bool
+    /// With `processing` off: silence while the Mac plays speech.
+    var echoGate: EchoGate?
+
+    init(mic: VoiceMic, device: OutputDevice, processing: Bool = true) {
         self.mic = mic
         self.device = device
+        self.processing = processing
     }
 
     func start() throws {
         mic.prepare(input: device.id) { [weak self] ok in
             guard let self, !self.lock.withLock({ self.stopped }) else { return }
-            let attached = ok && self.mic.attach("room", input: self.device.id) { [weak self] buf in self?.deliver(buf) }
+            let attached = ok && self.mic.attach("room", input: self.device.id, processing: self.processing) { [weak self] buf in self?.deliver(buf) }
             if !attached {
                 debugLog("room mic: echo cancellation unavailable, plain mic instead")
                 self.onFailed?()
             } else {
-                debugLog("room mic started with echo cancellation: \(self.device.name)")
+                debugLog("room mic started \(self.processing ? "with echo cancellation" : "through the unit, bypassed"): \(self.device.name)")
             }
         }
     }
@@ -223,7 +274,20 @@ final class EchoCancelledRoomMic: AudioSource, @unchecked Sendable {
     }
 
     private func deliver(_ buf: AVAudioPCMBuffer) {
-        if muted, let d = buf.floatChannelData?[0] { d.update(repeating: 0, count: Int(buf.frameLength)) }
+        let n = Int(buf.frameLength)
+        if let gate = echoGate, let d = buf.floatChannelData?[0], n > 0 {
+            var sum: Float = 0
+            for i in 0..<n { sum += d[i] * d[i] }
+            gate.roomLevel((sum / Float(n)).squareRoot(), seconds: Double(n) / buf.format.sampleRate)
+        }
+        // Silence in a buffer of its own: `buf` is the one every consumer gets, the talk key's press too.
+        if muted || echoGate?.closed() == true {
+            guard let quiet = AVAudioPCMBuffer(pcmFormat: buf.format, frameCapacity: buf.frameLength) else { return }
+            quiet.frameLength = buf.frameLength
+            if let d = quiet.floatChannelData?[0] { d.update(repeating: 0, count: n) }
+            onAudio?(quiet)
+            return
+        }
         onAudio?(buf)
     }
 }

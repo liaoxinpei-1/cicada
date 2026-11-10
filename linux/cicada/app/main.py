@@ -90,8 +90,12 @@ class Controller:
         self.translator.on_fixes = self.fixes.received
         # 同声传译: my microphone → the AI service → 知了 麦克风. The listen side's loudness feeds its echo check.
         from ..core.speak import SpeakEngine
-        from .room import EchoCanceller, Player, VirtualMic
+        from .room import TALK_MIC, TALK_SINK, EchoCanceller, Player, VirtualMic
         self.room = VirtualMic()
+        # The talk key's microphone with the meeting's voices taken out, made with 知了 麦克风 (as the
+        # Mac makes its voice unit ahead): what I say while they talk goes out instead of being dropped.
+        self.talk_echo = EchoCanceller(TALK_SINK, TALK_MIC, "talk-sink", agc_off=True)
+        self._talk_echo_lock = threading.Lock()
         # 电脑和会议室: the online voices taken out of the room mic (module-echo-cancel).
         self.echo = EchoCanceller()
         # Debug (roomEcho on): the room mic through the canceller. Off by default, as on the Mac: there
@@ -213,8 +217,13 @@ class Controller:
                 pass
         self.tray = tray.make(self, icon)
         def prepare():
-            (self.room.create if self.settings.speakEnabled else self.room.leftovers)()
+            self.talk_echo.remove()  # left by a run that crashed: the speakers are the default output again
             self.echo.remove()  # left by a run that crashed during 电脑和会议室
+            if self.settings.speakEnabled:
+                if self.room.create():
+                    self._make_talk_echo()
+            else:
+                self.room.leftovers()
             if speak:  # `cicada --speak` before Cicada was running: speak once 知了 麦克风 is there
                 GLib.idle_add(lambda: self.toggle_speaking() and False)
         threading.Thread(target=prepare, daemon=True).start()
@@ -885,15 +894,31 @@ class Controller:
     def set_speak_enabled(self, on: bool) -> bool:
         """Turning it on makes 知了 麦克风 (and the default input); off removes it. False if the sound
         server wouldn't make the device."""
-        if on and not self.room.on and not self.room.create():
-            return False
+        if on and not self.room.on:
+            if not self.room.create():
+                return False
+            self._make_talk_echo()
         if not on:
             self.speak.cancel()
+            self.talk_echo.remove()
             self.room.remove()
         self.settings.speakEnabled = on
         self.settings.save()
         self.changed()
         return True
+
+    def _make_talk_echo(self) -> None:
+        """The talk key's echo canceller, in front of the output that is the default now. Not while
+        电脑和会议室's debug canceller is (two in a row fight over the default output)."""
+        real = self.room.real_mic
+        if not real or self.echo.on:
+            return
+        with self._talk_echo_lock:  # a press can ask again while the last one is still being made
+            if self.talk_echo.ready(real):
+                return
+            self.talk_echo.remove()
+            made = self.talk_echo.create(real) is not None
+        Log.d("speak: echo canceller %s" % ("ready" if made else "unavailable, the plain mic"))
 
     def toggle_speaking(self) -> None:
         if self.speak.active:
@@ -912,8 +937,19 @@ class Controller:
                 self.speak.problem = L("没能建好知了麦克风")
                 self.changed()
                 return
-        # Me, from the microphone that was the default before 知了 麦克风 took its place.
-        mic = SystemAudio(self.room.real_mic or "@DEFAULT_SOURCE@")
+        # Me, from the microphone that was the default before 知了 麦克风 took its place: through the
+        # echo canceller made for it while the meeting still plays through that, else the plain mic
+        # (said over the meeting is dropped then) and the canceller is made again for the next time.
+        real = self.room.real_mic
+        cancelled = bool(real) and self.talk_echo.ready(real)
+        why = ""
+        if not cancelled:
+            why = ("no real microphone known" if not real else "no canceller" if not self.talk_echo.on
+                   else "the canceller was made for another microphone" if self.talk_echo.mic != real
+                   else "the canceller isn't the default output")
+            if real:
+                threading.Thread(target=self._make_talk_echo, daemon=True).start()
+        mic = SystemAudio(self.talk_echo.source if cancelled else real or "@DEFAULT_SOURCE@")
 
         def ended(reason):
             if reason:
@@ -921,7 +957,7 @@ class Controller:
                 self.speak.problem = L("没有可用的麦克风")
                 GLib.idle_add(lambda: self.speak.stop() or False)
         mic.on_ended = ended
-        self.speak.start(mic)
+        self.speak.start(mic, cancelled, why)
         self.show_notes()
 
     def stop_listening(self, ended_at=None, auto: bool = False) -> None:
@@ -1037,6 +1073,7 @@ class Controller:
 
         def run():
             self.speak.cancel()
+            self.talk_echo.remove()  # the speakers are the default output again
             if self.room.on:
                 self.room.remove()  # the real microphone is the default again
             if self.echo.on:

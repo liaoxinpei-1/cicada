@@ -310,11 +310,13 @@ def command(app, line: str) -> dict:
             return {"ok": True, "on": app.settings.speakerVoices}
         return {"ok": True, **_speakers(app, app.store.get(arg))}
     if cmd == "speak-enable":
-        return {"ok": app.set_speak_enabled(arg == "on"), "enabled": app.settings.speakEnabled, "realMic": app.room.real_mic}
+        return {"ok": app.set_speak_enabled(arg == "on"), "enabled": app.settings.speakEnabled, "realMic": app.room.real_mic,
+                "talkEcho": app.talk_echo.on}
     if cmd == "speak":
         if (arg == "on") != app.speak.active:
             app.toggle_speaking()
-        return {"ok": True, "speaking": app.speak.active}
+        # echoCancelled: this press reads the talk key's echo canceller (else the plain mic, echo drop on)
+        return {"ok": True, "speaking": app.speak.active, "echoCancelled": app.speak.echo_cancelled}
     if cmd == "codecs":
         from . import media
         return {"ok": True, **media.codecs(), "recordAudio": app.settings.recordAudio, "recording": listen.recording}

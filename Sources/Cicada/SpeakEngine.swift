@@ -285,7 +285,11 @@ final class SpeakEngine {
     // MARK: Push to talk
 
     func pressBegan() {
-        guard settings.speakEnabled || probe != nil, phase == .idle || phase == .speaking else { return }
+        guard settings.speakEnabled || probe != nil else { return }
+        guard phase == .idle || phase == .speaking else {
+            debugLog("speak: press while \(phase) ignored")
+            return
+        }
         if probe == nil {
             // 只听会议室 (older macOS): everyone is at the table and hears you; there is no call to speak into.
             if settings.listensToRoom { onNotice?(L("同声传译是给线上会议用的")); return }
@@ -439,7 +443,9 @@ final class SpeakEngine {
             defer { pressSamples = [] }
             return pressSamples
         }
-        let spoken = PressSpeech.spoken(samples)
+        let measure = PressSpeech.measure(samples)
+        let spoken = measure.spoken
+        debugLog("speak: press of \(String(format: "%.1f", Double(samples.count) / 16_000)) s, \(measure.summary)")
         guard samples.count >= 16_000 / 4 else { return (nil, spoken) }
         var d = Data()
         func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
@@ -482,16 +488,10 @@ final class SpeakEngine {
         releasedAt = nil
         let (wav, spoken) = takePressWAV()
         probe?.released = released
-        // A press nobody spoke in: Ming hears 嗯 in the room's hush and the meeting would hear "Hmm."
-        if wav != nil, !spoken, probe == nil {
-            debugLog("speak: nothing said in the press, nothing sent")
-            Task { _ = await u.text.value }
-            finals = []
-            volatile = ""
-            phase = .idle
-            onLive?(.idle, "", "")
-            return
-        }
+        // A press too quiet for PressSpeech: nobody spoke (Ming would hear 嗯 in the room's hush and
+        // the meeting "Hmm."), or a voice from across the desk under a line the meeting's leftover
+        // echo raised. The on-device recognizer decides which once it has finished.
+        let quiet = wav != nil && !spoken && probe == nil
         // The meeting playing through most of a press on the plain mic: don't send its echo back.
         if pressPlain, probe == nil, let share = playedShare?(pressStarted, released), share > Self.echoShare {
             debugLog(String(format: "speak: the Mac played through %.0f%% of the press (echo), nothing sent", share * 100))
@@ -511,16 +511,33 @@ final class SpeakEngine {
         let route = route?(to) ?? .system(nil)
         if case .stream = route, let device = outputDevice() { configureOutput(format: Self.streamFormat, device: device); try? out.start() }
         // Ming hears the audio while the on-device transcriber finishes, so its fallback costs nothing.
-        let ming = Task { () -> (original: String, translation: String)? in
+        // A quiet press waits for the transcriber first: most are nobody speaking, not worth a call.
+        let interpret = self.interpret
+        let startMing = { Task { () -> (original: String, translation: String)? in
             guard let wav, let interpret else { return nil }
             return await interpret(wav, from, to, trace)
-        }
+        } }
+        let early = quiet ? nil : startMing()
         Task {
             var text = await u.text.value
             finals = []
             volatile = ""
+            if quiet {
+                // Through echo cancellation the meeting's words don't reach the recognizer (none of
+                // 43 at 60 % on the speakers), so a sentence it heard is you. The plain mic has no
+                // such guarantee.
+                // A tap is too short for a sentence: a 0.3 s one with the meeting's echo around
+                // came back as two characters and went out.
+                guard !pressPlain, released.timeIntervalSince(pressStarted) >= 1, !text.isEmpty, !PressSpeech.filler(text) else {
+                    debugLog("speak: nothing said in the press, nothing sent")
+                    phase = .idle
+                    onLive?(.idle, "", L("没听清你说的，没有说出去"))
+                    return
+                }
+                debugLog("speak: quiet press, but the on-device recognizer heard \(text.count) chars: sending")
+            }
             if !text.isEmpty { onLive?(.translating, text, "") }
-            let heard = await ming.value
+            let heard = await (early ?? startMing()).value
             debugLog("speak: on-device heard \(text.count) chars, Ming \(heard.map { "\($0.original.count)" } ?? "-") chars")
             if let heard { text = heard.original }
             // Ming answers recognition and translation together: its whole call counts as `recognize`.
@@ -837,8 +854,23 @@ enum PressSpeech {
     }
     static let fillers: Set<String> = ["嗯", "啊", "呃", "哦", "唔", "额", "噢", "哎", "um", "uh", "hmm", "hm", "mm", "mhm", "ah", "oh", "er", "えー", "あの", "음", "어"]
 
-    static func spoken(_ samples: [Int16]) -> Bool {
-        guard samples.count >= frame else { return false }
+    /// What the check saw: seconds over the line, the press's quiet and the line (RMS, 0–1).
+    struct Measure: Equatable {
+        var voiced: Double
+        var floor: Float
+        var line: Float
+        var spoken: Bool { voiced >= PressSpeech.needed }
+        /// For the log: a line held at its −36 dBFS cap means the press's quiet was loud.
+        var summary: String {
+            func db(_ v: Float) -> String { v > 0 ? String(format: "%.0f", 20 * log10(v)) : "-inf" }
+            return "voiced \(String(format: "%.2f", voiced)) s, quiet \(db(floor)) dBFS, line \(db(line)) dBFS"
+        }
+    }
+
+    static func spoken(_ samples: [Int16]) -> Bool { measure(samples).spoken }
+
+    static func measure(_ samples: [Int16]) -> Measure {
+        guard samples.count >= frame else { return Measure(voiced: 0, floor: 0, line: 0) }
         var levels: [Float] = []
         var i = 0
         while i + frame <= samples.count {
@@ -852,7 +884,7 @@ enum PressSpeech {
         let floor = levels.sorted()[levels.count / 10]
         let line = min(0.016, max(0.0063, floor * 3))
         let voiced = Double(levels.filter { $0 >= line }.count) * Double(frame) / 16_000
-        return voiced >= needed
+        return Measure(voiced: voiced, floor: floor, line: line)
     }
 }
 

@@ -78,9 +78,14 @@ sealed class Controller
     public static string? Arrived;
     PushToTalk? talk;
     SpeakBar? speakBar;
+    /// The press's microphone: through echo cancellation, or the plain one when that won't open.
+    EchoMic? echoMic;
+    bool echoLogged;
     DeviceRecorder? mic;
     /// Dev builds: a WAV that stands in for the microphone (the VM has none).
     string? fakeMic;
+    /// Dev builds: the input the talk key reads instead of the microphone (`talkmic CABLE Output`).
+    string? talkMic;
     readonly Forms.NotifyIcon tray = new();
     System.Drawing.Icon? idleIcon, liveIcon, updateIcon;
     /// Something only the user can fix (AICheck.Blocking), said beyond the panel: the tray's orange
@@ -192,9 +197,29 @@ sealed class Controller
         else
         {
             if (Ling.HasKey) _ = Ling.Check();
+            NotifyCableSpeaker();
             if (Arrived == "--updated") Toast(LF("知了已更新到 %@", Version), L("会议记录、设置和 Ling key 都在。"));
             else if (Arrived is not null) FromInstaller();
         }
+    }
+
+    /// VB-Cable holds the speaker (installed before Cicada gave it back, or outside Cicada): the user
+    /// hears nothing and may blame Cicada. Said once (CableDefaults.ShouldNotify); a click gives a
+    /// real speaker back.
+    public void NotifyCableSpeaker()
+    {
+        var onCable = Endpoints.SpeakerIsCable();
+        if (CableDefaults.ShouldNotify(onCable, Settings.CableSpeakerNotified))
+        {
+            Toast(L("听不到电脑声音了？"), L("Windows 把输出改成了 CABLE Input，点此恢复"), () =>
+            {
+                if (!Endpoints.RestoreSpeaker()) Toast(L("自动恢复失败"), L("请去 Windows 声音设置，把输出设备改回你的耳机或扬声器"), () => Open("ms-settings:sound"));
+            });
+            Log.Debug("cable: speaker notified");
+        }
+        if (Settings.CableSpeakerNotified == onCable) return;
+        Settings.CableSpeakerNotified = onCable;
+        Settings.Save();
     }
 
     /// The installer ran again with this version (or an older one) already here: bring the main window.
@@ -245,7 +270,8 @@ sealed class Controller
             if (e.Button == Forms.MouseButtons.Left) Dispatch.BeginInvoke(() => { if (Listen.Listening && Settings.View == "notes") ToggleNotes(); else ShowFlyout(); });
             else if (e.Button == Forms.MouseButtons.Right) Dispatch.BeginInvoke(ShowMenu);
         };
-        tray.BalloonTipClicked += (_, _) => Dispatch.BeginInvoke(() => { balloonClicked?.Invoke(); balloonClicked = null; });
+        // Cleared before the run: a click may show the next notification, with its own action.
+        tray.BalloonTipClicked += (_, _) => Dispatch.BeginInvoke(() => { var c = balloonClicked; balloonClicked = null; c?.Invoke(); });
         UpdateTray();
     }
 
@@ -752,6 +778,7 @@ sealed class Controller
         ? new Rect(notesWindow!.Left, notesWindow.Top, notesWindow.ActualWidth, notesWindow.ActualHeight) : null;
 
     public void SetFakeMic(string? path) { fakeMic = path; Log.Debug($"speak: fake mic {(path is null ? "off" : "on")}"); }
+    public void SetTalkMic(string? name) { talkMic = name; Log.Debug($"speak: talk mic {name ?? "default"}"); }
 
     /// Dev: what the meeting hears. Records "CABLE Output" for `seconds` into `path` ("8 C:\x.wav").
     public async Task RecordCable(string arg)
@@ -772,16 +799,60 @@ sealed class Controller
         if (!Settings.Speak || Speak.State is SpeakEngine.Phase.Recording or SpeakEngine.Phase.Translating) return;
         if (!Ling.HasKey) { Speak.Report(Ling.Config.IsLing ? L("需要 Ling key 才能说") : LF("需要 %@ 的 key 才能说", Ling.Config.Name)); return; }
         if (Endpoints.Cable() is null) { Speak.Report(L("还没装虚拟麦克风，去设置里装一下")); return; }
-        if (fakeMic is null)
+        // With a fake mic the WAV is what is sent; a dev talk mic still opens, to run the real capture.
+        if (fakeMic is null || talkMic is not null)
         {
-            if (Endpoints.Microphone() is not { } m) { Speak.Report(L("没找到麦克风")); return; }
-            mic = new DeviceRecorder(m.Id);
-            mic.Start();
-            if (mic.Error is { } err) { mic = null; Speak.Report(err == "denied" ? L("Windows 不让知了用麦克风：设置 › 隐私和安全性 › 麦克风") : L("麦克风打不开")); return; }
+            if (TalkMic() is not { } m) { if (fakeMic is null) { Speak.Report(L("没找到麦克风")); return; } }
+            else if (OpenTalkMic(m) is { } err)
+            {
+                if (fakeMic is null) { Speak.Report(err == "denied" ? L("Windows 不让知了用麦克风：设置 › 隐私和安全性 › 麦克风") : L("麦克风打不开")); return; }
+            }
         }
         Speak.BeginRecording();
         // What you say isn't someone in the room.
         foreach (var r in roomSources) r.Muted = true;
+    }
+
+    /// The press's microphone: through Windows' echo cancellation when it opens, so what I say while
+    /// the other side talks on the speakers is sent (EchoMic); the plain mic when it doesn't. Null,
+    /// or why the mic can't be had ("denied").
+    string? OpenTalkMic(Endpoints.Device m)
+    {
+        var speakers = Endpoints.Default(Endpoints.Flow.Render);
+        // The cable is where my own voice goes, never the meeting's speakers.
+        var reference = speakers is not null && speakers.Id != Endpoints.Cable()?.Id ? speakers.Id : null;
+        var aec = new EchoMic(m.Id, reference);
+        aec.Start();
+        if (aec.Error is null)
+        {
+            echoMic = aec;
+            echoLogged = aec.EchoCancelled;
+            Log.Debug($"speak: mic {(aec.EchoCancelled ? "with echo cancellation" : "plain, no echo cancellation")} ({aec.Detail})");
+            return null;
+        }
+        if (aec.Error == "denied") return "denied";
+        mic = new DeviceRecorder(m.Id);
+        mic.Start();
+        Log.Debug($"speak: mic plain, the communications stream failed {aec.Error}");
+        if (mic.Error is { } err) { mic = null; return err; }
+        return null;
+    }
+
+    /// The talk key's microphone. Dev: `talkmic <name>` picks any input (the VM's only one is CABLE Output).
+    Endpoints.Device? TalkMic() => talkMic is { } name
+        ? Endpoints.All(Endpoints.Flow.Capture).FirstOrDefault(d => d.Description == name || d.Name.StartsWith(name))
+        : Endpoints.Microphone();
+
+    /// Ends the press's recording: what it heard, and whether through echo cancellation.
+    (short[] pcm, bool echoCancelled) StopTalkMic()
+    {
+        // As logged when the press began (a stream still opening then counts as plain), and still so.
+        var cancelled = echoLogged && echoMic?.EchoCancelled == true;
+        echoLogged = false;
+        var pcm = echoMic?.Stop() ?? mic?.Stop() ?? [];
+        echoMic = null;
+        mic = null;
+        return (pcm, cancelled);
     }
 
     /// Another key went down while a modifier talk key was held (Ctrl C): a shortcut, not talking.
@@ -789,8 +860,7 @@ sealed class Controller
     {
         foreach (var r in roomSources) r.Muted = false;
         if (Speak.State != SpeakEngine.Phase.Recording) return;
-        mic?.Stop();
-        mic = null;
+        StopTalkMic();
         Speak.Cancel();
         Log.Debug("talk: interrupted by another key");
     }
@@ -816,13 +886,13 @@ sealed class Controller
     {
         foreach (var r in roomSources) r.Muted = false;
         if (Speak.State != SpeakEngine.Phase.Recording) return;
-        var pcm =fakeMic is { } f ? Wav.Read(f) : mic?.Stop() ?? [];
-        mic = null;
+        var (recorded, echoCancelled) = StopTalkMic();
+        var pcm = fakeMic is { } f ? Wav.Read(f) : recorded;
         // A tap, not a sentence.
         if (pcm.Length < Segmenter.Rate * 3 / 10) { Speak.Cancel(); return; }
         // Held but nothing said (a muted mic): Ming would make something up from the hiss.
         if (pcm.Max(x => Math.Abs((int)x)) < 300) { Speak.Report(L("没听到你说话，没有发出去")); return; }
-        _ = Speak.Speak(Wav.Bytes(pcm), new DeviceSpeaker(Endpoints.Cable));
+        _ = Speak.Speak(Wav.Bytes(pcm), new DeviceSpeaker(Endpoints.Cable), echoCancelled);
     }
 
     public enum PreviewResult { Played, Stopped, NoSpeaker, NoVoice, FellBack, Failed }
@@ -1379,7 +1449,24 @@ static class DebugServer
                 break;
             }
             case "speakers": app.Settings.SpeakerVoices = arg == "on"; app.Settings.Save(); app.SettingsChanged(); break;
+            // speaker: the defaults and whether the cable holds the speaker; "cable" hands it the speaker
+            // (what Windows may do on install), "install" does that and then the installer's give-back,
+            // "restore" is 恢复声音, "notify" the startup notification again.
+            case "speaker":
+                if (arg is "cable" or "install")
+                {
+                    var before = Endpoints.Defaults();
+                    var to = Endpoints.Cable()!.Id;
+                    for (var role = 0; role < 3; role++) Endpoints.SetDefault(to, role);
+                    if (arg == "install") _ = CableInstaller.GiveBackDefaults(before); // about 4 s; ask "speaker" after
+                }
+                else if (arg == "restore") Endpoints.RestoreSpeaker();
+                else if (arg == "notify") { app.Settings.CableSpeakerNotified = false; app.NotifyCableSpeaker(); }
+                return new JsonObject { ["onCable"] = Endpoints.SpeakerIsCable(), ["speaker"] = Endpoints.Default(Endpoints.Flow.Render)?.Name, ["notified"] = app.Settings.CableSpeakerNotified,
+                    ["defaults"] = string.Join(" ", Endpoints.Defaults().OrderBy(d => d.Key).Select(d => $"{d.Key}={(Endpoints.CableIds().Contains(d.Value) ? "cable" : "real")}")) };
             case "fakemic": app.SetFakeMic(arg == "off" ? null : arg); break;
+            // talkmic <name>: the talk key reads this input (with fakemic the WAV is still what is sent).
+            case "talkmic": app.SetTalkMic(arg is "" or "off" ? null : arg); break;
             case "record": _ = app.RecordCable(arg); break;
             // 回放: "open <id> [transcript]", "play <seconds>|toggle|speed", "recordaudio on|off".
             case "open": { var p = arg.Split(' '); app.OpenRecord(p[0], p.Length > 1 ? p[1] : "notes"); break; }

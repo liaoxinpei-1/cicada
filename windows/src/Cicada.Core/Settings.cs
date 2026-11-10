@@ -77,6 +77,9 @@ public sealed class AppSettings
     [JsonPropertyName("updateLastChecked")] public DateTimeOffset? UpdateLastChecked { get; set; }
     /// The version the update notification was last shown for: one per version.
     [JsonPropertyName("updateNotified")] public string? UpdateNotified { get; set; }
+    /// The startup notification that VB-Cable holds the speaker was shown (CableDefaults.ShouldNotify);
+    /// cleared when a real speaker is back.
+    [JsonPropertyName("cableSpeakerNotified")] public bool CableSpeakerNotified { get; set; }
 
     [JsonIgnore] public string TargetCode => Target == "system" ? Languages.FromSystem(CultureInfo.CurrentUICulture.Name) : Target;
     /// The AI service in use, its address and models (what LingClient calls with).

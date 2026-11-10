@@ -866,6 +866,7 @@
 "没有虚拟麦克风 · 没有说出去" = "No virtual microphone · nothing was said";
 "这句没翻译成 · 没有说出去" = "This line wasn't translated · nothing was said";
 "对方在说话时说的，没有说出去" = "Said while they were talking, so not sent";
+"没听清你说的，没有说出去" = "Didn't catch what you said, so not sent";
 
 /* SpeakTest */
 "语音识别还没准备好，请稍后再试" = "Speech recognition isn't ready yet; try again shortly";

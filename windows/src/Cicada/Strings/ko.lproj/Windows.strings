@@ -350,3 +350,12 @@
 "开会时也会这样换过去，不会不出声。" = "회의 중에도 같은 방식으로 바뀌어 소리가 끊기지 않습니다.";
 "没放出声音。" = "재생되지 않았습니다.";
 "再试一次，还不行就换一个声音。" = "다시 시도하거나 다른 음성을 고르세요.";
+/* VB-Cable took the speaker (CableDefaults). Copy polished and translated with gemini-4-argon, reviewed. */
+"电脑声音照常从 %@ 播放" = "PC 소리는 평소처럼 %@에서 재생됩니다";
+"电脑没声了？" = "PC에서 소리가 안 나나요?";
+"Windows 把播放设备改成了 CABLE Input" = "Windows에서 재생 장치가 CABLE Input으로 변경됨";
+"恢复声音" = "소리 복구";
+"听不到电脑声音了？" = "PC 소리가 안 들리나요?";
+"Windows 把输出改成了 CABLE Input，点此恢复" = "Windows에서 출력이 CABLE Input으로 변경되었습니다. 클릭하여 복구하세요.";
+"自动恢复失败" = "자동 복구 실패";
+"请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Windows 소리 설정에서 출력 장치를 사용 중인 헤드폰이나 스피커로 다시 변경해 주세요.";

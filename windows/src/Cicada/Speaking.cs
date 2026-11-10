@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace Cicada.App;
 
@@ -139,6 +141,19 @@ sealed class PushToTalk : IDisposable
 /// pinned SHA-256 before anything runs, then its installer with Windows' admin prompt.
 static class CableInstaller
 {
+    /// 电脑没声了？ in onboarding and settings: shown while the cable holds the speaker, one button
+    /// gives a real speaker back.
+    public static FrameworkElement SpeakerStrip(Window owner, Action changed)
+    {
+        var text = new StackPanel { Children = { Ui.Text(Strings.L("电脑没声了？"), 14, Palette.Ink), Ui.Text(Strings.L("Windows 把播放设备改成了 CABLE Input"), 13, Palette.WarnIcon) } };
+        var strip = Ui.Spread(text, Ui.Button(Strings.L("恢复声音"), () =>
+        {
+            if (!Endpoints.RestoreSpeaker()) Dialogs.Tell(owner, Strings.L("自动恢复失败"), Strings.L("请去 Windows 声音设置，把输出设备改回你的耳机或扬声器"));
+            changed();
+        }, Ui.Kind.Primary, height: 32));
+        return new Border { Background = Palette.WarnBg, CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 8, 8), Child = strip };
+    }
+
     public enum Result { Installed, DownloadFailed, BadPackage, Declined, Failed }
 
     public static async Task<Result> Install(Action<string> progress)
@@ -160,6 +175,8 @@ static class CableInstaller
         }
         catch (Exception e) { Log.Debug($"cable: extract failed {e.GetType().Name}"); return Result.Failed; }
         progress(Strings.L("正在安装…"));
+        // Windows may hand the new cable the default speaker and mic (CableDefaults): remember them.
+        var before = Endpoints.Defaults();
         // The x64 installer also puts the ARM64 driver on Windows on ARM.
         var setup = Path.Combine(dir, Environment.Is64BitOperatingSystem ? "VBCABLE_Setup_x64.exe" : "VBCABLE_Setup.exe");
         try
@@ -173,9 +190,22 @@ static class CableInstaller
         catch (Exception e) { Log.Debug($"cable: setup failed {e.GetType().Name}"); return Result.Failed; }
         for (int i = 0; i < 40; i++)
         {
-            if (Endpoints.Cable() is not null) { Log.Debug("cable: endpoint ready"); return Result.Installed; }
+            if (Endpoints.Cable() is not null) { Log.Debug("cable: endpoint ready"); await GiveBackDefaults(before); return Result.Installed; }
             await Task.Delay(500);
         }
         return Result.Failed;
+    }
+
+    /// Windows switches the default a moment after the endpoint appears, not always at once: look
+    /// for a few seconds.
+    internal static async Task GiveBackDefaults(Dictionary<string, string> before)
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            var cables = Endpoints.CableIds();
+            foreach (var (key, id) in CableDefaults.Restore(before, Endpoints.Defaults(), cables.Contains))
+                Log.Debug($"cable: default {key} given back {Endpoints.SetDefault(id, int.Parse(key[2..]))}");
+            await Task.Delay(500);
+        }
     }
 }

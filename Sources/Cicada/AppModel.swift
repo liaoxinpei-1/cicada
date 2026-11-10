@@ -23,10 +23,13 @@ final class AppModel: ObservableObject {
     /// 电脑和会议室: the microphone side, its own engine (language, pauses, model), as Feishu keeps the
     /// online and the room streams apart instead of mixing them into one track.
     lazy var roomListen = ListenEngine(settings: settings, role: .room)
-    /// Debug (`roomEcho:on`, `roomGate:off`): the room through the echo-cancelling unit, or without
-    /// the gate, to try each defence alone. Next meeting. The unit is off by default: it let no echo
-    /// through, but lost most of what people at the table said (`EchoGate`).
-    var roomEchoCancel = false
+    /// Debug (`roomEcho:on|off|bypass`, `roomGate:off`), next meeting. By default the room is heard
+    /// through the echo-cancelling unit with its processing off (`bypass`): the plain mic's sound and
+    /// the gate, as `RoomMic` (processing on let no echo through but lost most of what people at the
+    /// table said), while the talk key turns processing on for a press. With the plain mic the press
+    /// had no echo cancellation and was dropped whenever the other side was talking.
+    var roomEchoCancel = true
+    var roomEchoBypass = true
     var roomEchoGate = true
     /// The Mac's lines of late (wall clock), and room lines waiting to be told apart from their echo.
     private var recentOnline: [EchoMatch.Heard] = []
@@ -1382,12 +1385,13 @@ final class AppModel: ObservableObject {
         // macOS 14/15: two live recognizers interrupt each other (docs/macos-legacy-plan.md 2, 10).
         guard !roomListen.isRunning, !Recognition.legacy else { return }
         roomListen.echoCancelled = roomEchoCancel
+        roomListen.echoBypassed = roomEchoBypass
         // Last meeting's measurement may be another room or another output: assume echo until measured.
         roomListen.echoGate.reset()
         // A, the gate: only the plain room mic heeds it (echo cancellation keeps talk over a remote speaker).
         listen.router.setOnLoud(roomEchoGate ? { [gate = roomListen.echoGate] in gate.hold() } : nil)
         roomListen.start()
-        debugLog("hybrid: room side started (echo cancellation \(roomEchoCancel ? "on" : "off"), gate \(roomEchoGate ? "on" : "off"))")
+        debugLog("hybrid: room side started (echo cancellation \(roomEchoBypass ? "bypassed" : roomEchoCancel ? "on" : "off"), gate \(roomEchoGate ? "on" : "off"))")
     }
 
     private func stopRoomSide() {
@@ -2218,7 +2222,10 @@ final class AppModel: ObservableObject {
                     debugLog("voiceMicRun: \(ok && voiceMic.attach("debug", input: d.id) { _ in } ? "running" : "failed")")
                 }
             }
-        case "roomEcho": roomEchoCancel = arg != "off"
+        case "roomEcho":
+            // roomEcho:<on|off|bypass>: bypass = through the unit with processing off, on only for a press.
+            roomEchoCancel = arg != "off"
+            roomEchoBypass = arg == "bypass"
         case "roomGate": roomEchoGate = arg != "off"
         case "hybridState":
             debugLog("hybrid state source=\(settings.listenSource) main=\(listen.isRunning) room=\(roomListen.isRunning) "

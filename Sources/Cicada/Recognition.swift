@@ -179,14 +179,17 @@ enum Recognition {
     }
 
     /// Fetches the model for `locale` when it isn't on the Mac; `progress` is called once a
-    /// download starts. Throws when this Mac can't recognize the language.
-    static func install(_ locale: String, progress: (Progress) -> Void = { _ in }) async throws {
+    /// download starts, on the main actor: every caller sets UI state there, and from the
+    /// cooperative pool it redrew the menu bar panel off the main thread, which ended the app
+    /// (`TSMGetInputSourceProperty` asserts the main queue). Throws when this Mac can't recognize
+    /// the language.
+    static func install(_ locale: String, progress: @MainActor (Progress) -> Void = { _ in }) async throws {
         if host != nil || cloudOnly { return }
         if !legacy, #available(macOS 26, *) {
             let t = Analyzer.module(locale)
             if await AssetInventory.status(forModules: [t]) == .unsupported { throw unsupported(locale) }
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [t]) {
-                progress(request.progress)
+                await progress(request.progress)
                 try await request.downloadAndInstall()
             }
             return

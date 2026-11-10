@@ -516,7 +516,8 @@ final class ListenEngine {
         }
         // 电脑和会议室: the remote voices from the speakers are taken out of the mic (`VoiceMic`).
         if role == .room, echoCancelled, let voiceMic, let device = roomDevice?() {
-            let mic = EchoCancelledRoomMic(mic: voiceMic, device: device)
+            let mic = EchoCancelledRoomMic(mic: voiceMic, device: device, processing: !echoBypassed)
+            if echoBypassed { mic.echoGate = echoGate }
             mic.muted = roomMuted
             let router = self.router
             mic.onAudio = { pcm in router.push(pcm) }
@@ -566,6 +567,9 @@ final class ListenEngine {
     /// 电脑和会议室: take the online voices out of the room mic with the echo-cancelling unit. Off,
     /// or when the unit can't be had, the plain mic is gated while the Mac plays speech (`gateEcho`).
     var echoCancelled = true
+    /// With `echoCancelled`: the room through the unit with processing off (the plain mic's sound,
+    /// gated as `RoomMic` is), so a talk-key press can turn it on (`VoiceMic.attach(processing:)`).
+    var echoBypassed = false
     var voiceMic: VoiceMic?
     /// Whether the plain room mic is open: the echo-cancelling unit would starve it, so it lets the
     /// unit go each time it starts (`startRoomMic`).

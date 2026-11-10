@@ -350,3 +350,12 @@
 "开会时也会这样换过去，不会不出声。" = "Meetings fall back the same way, so you're never silent.";
 "没放出声音。" = "Nothing played.";
 "再试一次，还不行就换一个声音。" = "Try again, or pick another voice.";
+/* VB-Cable took the speaker (CableDefaults). Copy polished and translated with gemini-4-argon, reviewed. */
+"电脑声音照常从 %@ 播放" = "PC audio will keep playing through %@";
+"电脑没声了？" = "No sound from your PC?";
+"Windows 把播放设备改成了 CABLE Input" = "Windows changed the playback device to CABLE Input";
+"恢复声音" = "Restore sound";
+"听不到电脑声音了？" = "Can't hear your PC?";
+"Windows 把输出改成了 CABLE Input，点此恢复" = "Windows switched audio output to CABLE Input. Click to restore.";
+"自动恢复失败" = "Couldn't restore audio";
+"请去 Windows 声音设置，把输出设备改回你的耳机或扬声器" = "Go to Windows Sound settings and switch the output device back to your headphones or speakers.";

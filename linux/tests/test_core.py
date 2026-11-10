@@ -1211,11 +1211,11 @@ class Speaking(Base):
         eng = SpeakEngine(ling, Translator(ling), settings, listen=listen, player=lambda: player)
         return eng, fake, player
 
-    def _say(self, eng, pcm):
+    def _say(self, eng, pcm, echo_cancelled=False):
         src = PcmAudioSource(lambda: pcm, speed=0)
         done = threading.Event()
         src.on_ended = lambda why: done.set()
-        eng.start(src)
+        eng.start(src, echo_cancelled)
         done.wait(5)
         time.sleep(0.6)
         eng.stop()
@@ -1303,6 +1303,35 @@ class Speaking(Base):
         self.assertEqual(0, eng.spoken)
         self.assertEqual([], fake.calls, "not even sent to Ming")
         self.assertIsNotNone(eng.problem, "and the user is told")
+
+    def test_through_the_echo_canceller_talking_over_them_goes_out(self):
+        # The talk key read the microphone through module-echo-cancel: their voices are taken out,
+        # so what I say over them is mine and is sent (the Mac's rule since 96205f8).
+        class Listening:
+            listening = True
+            spoken = "en"
+            session_id = None
+        eng, fake, player = self._engine("ORIGINAL: 你好\nTRANSLATION: Hello", listen=Listening())
+        stop = threading.Event()
+
+        def loud():
+            while not stop.is_set():
+                eng.loudness.add(True)
+                time.sleep(0.02)
+        threading.Thread(target=loud, daemon=True).start()
+        self._say(eng, concat(tone(1.2), silence(1.0)), echo_cancelled=True)
+        stop.set()
+        self.assertEqual(1, eng.spoken)
+        self.assertEqual(1, len(fake.calls), "sent to Ming")
+        self.assertIsNone(eng.problem)
+
+    def test_echo_drop_is_only_for_the_plain_mic(self):
+        from cicada.core.speak import echo_dropped
+        self.assertTrue(echo_dropped(True, False, 0.8, False), "plain mic, loud meeting: dropped")
+        self.assertFalse(echo_dropped(True, False, 0.8, True), "echo cancelled: sent")
+        self.assertFalse(echo_dropped(True, True, 0.8, False), "headphones: sent")
+        self.assertFalse(echo_dropped(True, False, 0.4, False), "loud for less than half: sent")
+        self.assertFalse(echo_dropped(False, False, 1.0, False), "not listening, nothing measured: sent")
 
     def test_with_headphones_talking_over_them_still_goes_out(self):
         class Listening:
