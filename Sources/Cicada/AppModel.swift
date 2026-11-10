@@ -126,6 +126,8 @@ final class AppModel: ObservableObject {
     @Published var liveSource = ""
     /// Lines whose words the record's own recognizer hasn't settled yet (the notes window says 校准中).
     @Published private(set) var settling: Set<String> = []
+    /// Lines whose voiceprint is still being worked out: no voice yet is not "like no voice".
+    @Published private(set) var voicePending: Set<String> = []
     @Published var liveTranslation = ""
     @Published var onboardingStep = 1
     /// Step 3 is showing what skipping the key leaves out (debug: `onboarding:3,skip`).
@@ -669,6 +671,7 @@ final class AppModel: ObservableObject {
         heldJoin = nil
         refining = [:]
         settling = []
+        voicePending = []
         refiningOrder = []
         lineOfSegment = [:]
         settledEarly = [:]
@@ -1527,6 +1530,7 @@ final class AppModel: ObservableObject {
         if let held = heldJoin {
             heldJoin = nil
             appendHeard(held.seg, t: held.t, translation: held.translation)
+            if let line = lineForSegment[held.seg.id] { voicePending.insert(line) }
         }
         guard let prev = lastHeard, store.session(store.liveID ?? "")?.lines.last?.id == prev.line,
               prev.seg.clock == seg.clock, prev.seg.sourceCode == seg.sourceCode,
@@ -1549,7 +1553,10 @@ final class AppModel: ObservableObject {
     private func heardVoice(_ seg: Segment, _ voice: Int?) {
         guard let held = heldJoin, held.seg.id == seg.id else {
             // Already recorded on its own (another line came first).
-            if let voice, let line = lineForSegment[seg.id] { speakers.onVoice?(line, voice) }
+            if let line = lineForSegment[seg.id] {
+                if let voice { speakers.onVoice?(line, voice) }
+                voicePending.remove(line)
+            }
             return
         }
         heldJoin = nil
@@ -1596,7 +1603,8 @@ final class AppModel: ObservableObject {
         lastHeard = (kept, id)
         // A line with hardly a letter ("." from a breath or a click) gets no voiceprint.
         if tag, settings.speakerVoices, let samples = seg.voiceSamples, seg.text.filter(\.isLetter).count >= 2 {
-            speakers.tag(lineID: id, samples: samples)
+            voicePending.insert(id)
+            speakers.tag(lineID: id, samples: samples) { [weak self] in self?.voicePending.remove(id) }
         }
         heardWords()
     }
